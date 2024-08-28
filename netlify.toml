@@ -1,0 +1,6 @@
+[build]
+  publish = "public"
+  functions = "functions"
+[dev]
+  command = "npx netlify dev"
+  targetPort = 8888
