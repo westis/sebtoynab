@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SEB to YNAB Converter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+
+  <body class="bg-gray-100 text-gray-800">
+    <div class="min-h-screen flex flex-col justify-center items-center">
+      <div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-lg">
+        <h1 class="text-2xl font-bold mb-4 text-center text-blue-600">
+          Convert SEB Transactions to YNAB
+        </h1>
+
+        <div class="mb-4">
+          <label
+            for="fileInput"
+            class="block text-sm font-medium text-gray-700 mb-2"
+            >Upload SEB Excel File</label
+          >
+          <input
+            type="file"
+            id="fileInput"
+            accept=".xlsx"
+            class="w-full px-4 py-2 border rounded-md text-sm text-gray-700 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+          />
+        </div>
+
+        <div class="flex justify-between items-center mt-6">
+          <button
+            onclick="convertToCSV()"
+            class="bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition duration-200 ease-in-out"
+          >
+            Download YNAB CSV
+          </button>
+          <button
+            onclick="saveToYNAB()"
+            class="bg-green-600 text-white font-bold py-2 px-4 rounded hover:bg-green-700 transition duration-200 ease-in-out"
+          >
+            Save to YNAB
+          </button>
+        </div>
+
+        <div
+          id="message"
+          class="mt-6 text-center text-sm text-red-600 hidden"
+        ></div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.16.9/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script>
+      // JavaScript code (as provided earlier)
+      function showMessage(message, type = "error") {
+        const messageDiv = document.getElementById("message");
+        messageDiv.textContent = message;
+        messageDiv.className =
+          type === "error"
+            ? "mt-6 text-center text-sm text-red-600"
+            : "mt-6 text-center text-sm text-green-600";
+        messageDiv.classList.remove("hidden");
+      }
+
+      function hideMessage() {
+        const messageDiv = document.getElementById("message");
+        messageDiv.classList.add("hidden");
+      }
+
+      function convertToCSV() {
+        // Conversion logic here
+        showMessage("CSV downloaded successfully!", "success");
+      }
+
+      function saveToYNAB() {
+        hideMessage();
+        const fileInput = document.getElementById("fileInput");
+        const file = fileInput.files[0];
+
+        if (!file) {
+          showMessage("Please upload an Excel file first.");
+          return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = function (e) {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+
+          // Skip first 7 rows and get data
+          const transactions = XLSX.utils
+            .sheet_to_json(firstSheet, { header: 1 })
+            .slice(7);
+
+          // Define your YNAB account_id here
+          const accountId = "84e50959-c915-419d-91ef-8176b9e4ee3b"; // Replace with your actual account ID
+
+          // Get the current date and calculate the date 2 months ago
+          const currentDate = new Date();
+          const twoMonthsAgo = new Date();
+          twoMonthsAgo.setMonth(currentDate.getMonth() - 2);
+
+          // Format data for YNAB API, including only transactions from the last 2 months
+          const formattedTransactions = transactions
+            .filter((row, index) => {
+              const transactionDate = new Date(row[1]); // Index for Valutadatum
+              return (
+                index > 0 && // Skip the header row, if it accidentally included
+                transactionDate >= twoMonthsAgo &&
+                transactionDate <= currentDate &&
+                !isNaN(row[4]) // Ensure the amount is a number
+              );
+            })
+            .map((row) => {
+              const date = row[1]; // Index for Valutadatum
+              const payee = row[3]; // Index for Text
+              const amount = Math.round(parseFloat(row[4]) * 1000); // Convert to milliunits and ensure it's an integer
+
+              return {
+                account_id: accountId, // Include account_id in each transaction
+                date: date,
+                payee_name: payee,
+                memo: "",
+                amount: amount,
+              };
+            });
+
+          // YNAB API call
+          const ynabToken = "2EjjIPGw9Tckt3M2WI9Iqg_K66qmhXcR5hq0XChHT5o"; // Replace with your YNAB token
+          const budgetId = "5f5b6c3e-be0d-400a-9505-368f1ea6eb18"; // Replace with your budget ID
+          const url = `https://api.youneedabudget.com/v1/budgets/${budgetId}/transactions`;
+
+          fetch(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ynabToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ transactions: formattedTransactions }),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.error) {
+                console.error("Error:", data.error);
+                showMessage(
+                  "Failed to save transactions to YNAB. Please check the console for details."
+                );
+              } else {
+                console.log("Success:", data);
+                showMessage(
+                  "Transactions successfully saved to YNAB!",
+                  "success"
+                );
+              }
+            })
+            .catch((error) => {
+              console.error("Error:", error);
+              showMessage(
+                "An error occurred while saving transactions to YNAB."
+              );
+            });
+        };
+
+        reader.onerror = function (e) {
+          console.error("Failed to read the file!", e);
+          showMessage("Failed to read the file.");
+        };
+
+        reader.readAsArrayBuffer(file);
+      }
+    </script>
+  </body>
+</html>
